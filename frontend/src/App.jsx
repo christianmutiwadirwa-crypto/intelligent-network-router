@@ -1,23 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Network, GitGraph, Activity, Zap, Play, Settings, MousePointerClick, X, Brain, ChevronRight } from 'lucide-react';
+import { Network, GitGraph, Zap, Play, Settings, MousePointerClick, X, Brain, ChevronRight } from 'lucide-react';
 import ForceGraph2D from 'react-force-graph-2d';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer
-} from 'recharts';
 import './index.css';
+import Builder from './Builder';
+import { routerImg, pcImg } from './device-icons';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8000/api';
 
 function App() {
   const [networkStats, setNetworkStats] = useState(null);
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
+  const [page, setPage] = useState('simulator');
+  const [topologySource, setTopologySource] = useState('default');
   const [loading, setLoading] = useState(false);
   const [nodeCount, setNodeCount] = useState(30);
   const [degree, setDegree] = useState(3);
@@ -31,20 +26,51 @@ function App() {
   const [metric, setMetric] = useState('latency');
   const [showWeights, setShowWeights] = useState('none');
   const [intelligentResult, setIntelligentResult] = useState(null);
-  const [precomputedResult, setPrecomputedResult] = useState(null);
-  const [showMatrix, setShowMatrix] = useState(false);
   const [toast, setToast] = useState(null);
   const graphRef = useRef();
 
   const showToast = (msg) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 6000);
   };
 
   // Edge editing state
   const [editingLink, setEditingLink] = useState(null);
   const [linkEditForm, setLinkEditForm] = useState({ latency: 0, bandwidth: 0, packet_loss: 0, reliability: 0, cost: 0, net_credit: 0, sla_bonus: 0 });
   const [isUpdatingLink, setIsUpdatingLink] = useState(false);
+
+  // Animation state
+  const [activePathEdgeIndex, setActivePathEdgeIndex] = useState(-1);
+  const [isExploring, setIsExploring] = useState(false);
+
+  useEffect(() => {
+    if (routingResult && routingResult.path && routingResult.path.length > 1) {
+      setActivePathEdgeIndex(0);
+      setIsExploring(true);
+      let step = 0;
+      let exploring = true;
+      
+      const interval = setInterval(() => {
+        if (exploring) {
+          exploring = false;
+          setIsExploring(false);
+        } else {
+          step++;
+          if (step >= routingResult.path.length - 1) {
+            clearInterval(interval);
+          } else {
+            exploring = true;
+            setIsExploring(true);
+            setActivePathEdgeIndex(step);
+          }
+        }
+      }, 700); // 700ms to explore, 700ms to lock in
+      return () => clearInterval(interval);
+    } else {
+      setActivePathEdgeIndex(-1);
+      setIsExploring(false);
+    }
+  }, [routingResult]);
 
   const generateNetwork = async () => {
     setLoading(true);
@@ -56,10 +82,10 @@ function App() {
       });
       setNetworkStats(res.data.stats);
       setGraphData(res.data.graph);
+      setTopologySource('default');
       setRoutingResult(null);
       setMstResult(null);
       setIntelligentResult(null);
-      setPrecomputedResult(null);
       setSourceNode(null);
       setTargetNode(null);
       setEditingLink(null);
@@ -98,6 +124,13 @@ function App() {
         target: targetNode.id,
         metric
       });
+      if (res.data.cost === -1.0) {
+        showToast('No path exists between the selected nodes.');
+        setRoutingResult(null);
+        if (negativeMetrics.includes(metric)) setIntelligentResult(null);
+        setLoading(false);
+        return;
+      }
       setRoutingResult(res.data);
       setMstResult(null);
       if (negativeMetrics.includes(metric)) setIntelligentResult(res.data);
@@ -136,6 +169,13 @@ function App() {
         target: targetNode.id,
         metric
       });
+      if (res.data.cost === -1.0) {
+        showToast('No path exists between the selected nodes.');
+        setRoutingResult(null);
+        setIntelligentResult(null);
+        setLoading(false);
+        return;
+      }
       setRoutingResult(res.data);
       setMstResult(null);
       setIntelligentResult(res.data);
@@ -160,20 +200,6 @@ function App() {
     setLoading(false);
   };
 
-  const runPrecompute = async () => {
-    setLoading(true);
-    try {
-      const res = await axios.post(`${API_BASE}/routing/precompute`, { metric });
-      setPrecomputedResult(res.data);
-      setRoutingResult(null);
-      setMstResult(null);
-      setIntelligentResult(null);
-      showToast(`Precomputed ${res.data.pairs_computed} paths in ${res.data.time_ms.toFixed(1)}ms!`);
-    } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  };
 
   const handleNodeClick = useCallback(node => {
     if (!sourceNode) {
@@ -254,25 +280,100 @@ function App() {
     if (sourceNode && node.id === sourceNode.id) return '#10b981';
     if (targetNode && node.id === targetNode.id) return '#ef4444';
     
-    if (routingResult) {
-      if (routingResult.path.includes(node.id)) return '#f59e0b';
+    if (routingResult && activePathEdgeIndex >= 0) {
+      const lockedUpToIndex = isExploring ? activePathEdgeIndex : activePathEdgeIndex + 1;
+      const activeNodes = routingResult.path.slice(0, lockedUpToIndex + 1);
+      if (activeNodes.includes(node.id)) return '#f59e0b';
     }
     return '#3b82f6';
   };
 
+  const paintDeviceNode = useCallback((node, ctx, globalScale) => {
+    let isSource = sourceNode && node.id === sourceNode.id;
+    let isTarget = targetNode && node.id === targetNode.id;
+    let isPath = false;
+    
+    if (routingResult && activePathEdgeIndex >= 0) {
+      const lockedUpToIndex = isExploring ? activePathEdgeIndex : activePathEdgeIndex + 1;
+      const activeNodes = routingResult.path.slice(0, lockedUpToIndex + 1);
+      if (activeNodes.includes(node.id)) isPath = true;
+    }
+    
+    const size = 12; // radius size
+
+    // Draw glow/halo for state
+    let strokeColor = 'transparent';
+    let hasGlow = false;
+    
+    if (isSource) { strokeColor = '#10b981'; hasGlow = true; }
+    else if (isTarget) { strokeColor = '#ef4444'; hasGlow = true; }
+    else if (isPath) { strokeColor = '#f59e0b'; hasGlow = true; }
+
+    if (hasGlow) {
+       ctx.beginPath();
+       ctx.arc(node.x, node.y, size * 1.2, 0, 2 * Math.PI, false);
+       ctx.fillStyle = strokeColor;
+       ctx.shadowBlur = 15;
+       ctx.shadowColor = strokeColor;
+       ctx.fill();
+       ctx.shadowBlur = 0; // reset
+    }
+
+    if (node.type === 'pc') {
+       ctx.drawImage(pcImg, node.x - size, node.y - size, size * 2, size * 2);
+    } else if (node.type === 'router') {
+       ctx.drawImage(routerImg, node.x - size, node.y - size, size * 2, size * 2);
+    } else {
+       ctx.beginPath();
+       ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI, false);
+       ctx.fillStyle = '#94a3b8';
+       ctx.fill();
+    }
+    
+    // Label
+    const label = node.id;
+    const fontSize = 12/globalScale;
+    ctx.font = `${fontSize}px Sans-Serif`;
+    const textWidth = ctx.measureText(label).width;
+    const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.2);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y + size + 4, ...bckgDimensions);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, node.x, node.y + size + 4 + fontSize / 2);
+
+  }, [sourceNode, targetNode, routingResult, activePathEdgeIndex, isExploring]);
+
   const getLinkColor = link => {
     if (editingLink && link === editingLink) return '#38bdf8'; // Highlight editing link in cyan
     
-    if (routingResult) {
+    if (routingResult && activePathEdgeIndex >= 0) {
       const sourceId = link.source.id || link.source;
       const targetId = link.target.id || link.target;
+      const path = routingResult.path;
       
-      for (let i = 0; i < routingResult.path.length - 1; i++) {
-        if (
-          (routingResult.path[i] === sourceId && routingResult.path[i+1] === targetId) ||
-          (routingResult.path[i] === targetId && routingResult.path[i+1] === sourceId)
-        ) {
-          return '#f59e0b';
+      let isLockedInPath = false;
+      const lockedUpToIndex = isExploring ? activePathEdgeIndex - 1 : activePathEdgeIndex;
+      
+      for (let i = 0; i <= lockedUpToIndex; i++) {
+        if (i < path.length - 1) {
+          if ((path[i] === sourceId && path[i+1] === targetId) ||
+              (path[i] === targetId && path[i+1] === sourceId)) {
+            isLockedInPath = true;
+            break;
+          }
+        }
+      }
+      
+      if (isLockedInPath) return '#f59e0b';
+      
+      if (isExploring && activePathEdgeIndex < path.length - 1) {
+        const currentNode = path[activePathEdgeIndex];
+        if (sourceId === currentNode || targetId === currentNode) {
+          return '#6ee7b7'; // Exploration color (light cyan/green)
         }
       }
     }
@@ -350,22 +451,54 @@ function App() {
     ctx.fillText(label, midX, midY);
   }, [showWeights, metric, routingResult, mstResult, editingLink, sourceNode, targetNode]);
 
+  const handleLoadCustomGraph = (data) => {
+    setNetworkStats(data.stats);
+    setGraphData(data.graph);
+    setTopologySource('builder');
+    if (['net_credit', 'sla_bonus'].includes(metric)) {
+      setMetric('latency');
+    }
+    setRoutingResult(null);
+    setMstResult(null);
+    setIntelligentResult(null);
+    setSourceNode(null);
+    setTargetNode(null);
+    setPage('simulator');
+    setTimeout(() => {
+      if(graphRef.current) graphRef.current.zoomToFit(400, 20);
+    }, 500);
+  };
+
+  if (page === 'builder') {
+    return <Builder setCustomGraphData={handleLoadCustomGraph} setPage={setPage} />;
+  }
+
   return (
     <div className="container" style={{ maxWidth: '1600px' }}>
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '12px 24px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+         <h1 style={{ margin: 0, fontSize: '1.2rem', color: '#38bdf8', flex: 1 }}>Network Router</h1>
+         <button className="btn" onClick={() => setPage('simulator')} style={{ background: '#3b82f6' }}>Simulator Mode</button>
+         <button className="btn" onClick={() => setPage('builder')} style={{ background: 'transparent', border: '1px solid #3b82f6' }}>Builder Mode</button>
+      </div>
       {toast && (
         <div style={{
           position: 'fixed',
           top: '20px',
           left: '50%',
           transform: 'translateX(-50%)',
-          background: 'rgba(239, 68, 68, 0.9)',
+          background: 'rgba(239, 68, 68, 0.95)',
           color: 'white',
-          padding: '12px 24px',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          padding: '14px 24px',
+          borderRadius: '10px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
           zIndex: 9999,
           backdropFilter: 'blur(8px)',
-          animation: 'fade-in-out 3.5s ease-in-out forwards'
+          maxWidth: '540px',
+          width: 'max-content',
+          textAlign: 'center',
+          lineHeight: '1.5',
+          fontSize: '0.88rem',
+          animation: 'fade-in-out 6s ease-in-out forwards'
         }}>
           {toast}
         </div>
@@ -411,7 +544,7 @@ function App() {
             </div>
             
             <button className="btn" onClick={generateNetwork} disabled={loading}>
-              <Activity size={18} />
+              <Zap size={18} />
               {loading ? 'Generating...' : 'Regenerate Graph'}
             </button>
             
@@ -437,8 +570,8 @@ function App() {
                 <option value="bandwidth">Bandwidth</option>
                 <option value="packet_loss">Packet Loss</option>
                 <option value="cost">Financial Cost</option>
-                <option value="net_credit">Network Credit</option>
-                <option value="sla_bonus">SLA Bonus</option>
+                <option value="net_credit" disabled={topologySource === 'builder'}>Network Credit</option>
+                <option value="sla_bonus" disabled={topologySource === 'builder'}>SLA Bonus</option>
               </select>
             </div>
 
@@ -484,7 +617,7 @@ function App() {
 
             {/* Divider */}
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '4px 0 12px' }} />
-            <p style={{ margin: '0 0 8px', fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>⚡ Intelligent Mode</p>
+            <p style={{ margin: '0 0 8px', fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Intelligent Mode</p>
 
             <button
               className="btn"
@@ -502,14 +635,6 @@ function App() {
             >
               <Brain size={18} /> Auto-Route MST
             </button>
-            <button
-              className="btn"
-              style={{ background: 'linear-gradient(135deg, #ec4899 0%, #be185d 100%)', boxShadow: '0 0 16px rgba(236,72,153,0.3)' }}
-              onClick={runPrecompute}
-              disabled={!networkStats || loading}
-            >
-              <Activity size={18} /> Precompute All Paths
-            </button>
           </div>
         </div>
 
@@ -521,17 +646,22 @@ function App() {
               width={undefined} 
               height={undefined}
               graphData={graphData}
-              nodeColor={getNodeColor}
-              nodeRelSize={6}
+              nodeColor={topologySource === 'default' ? getNodeColor : undefined}
+              nodeCanvasObject={topologySource === 'builder' ? paintDeviceNode : undefined}
+              nodeRelSize={topologySource === 'builder' ? 12 : 6}
               linkColor={getLinkColor}
               linkWidth={getLinkWidth}
               onNodeClick={handleNodeClick}
               onLinkClick={handleLinkClick}
+              onNodeDragEnd={node => {
+                node.fx = node.x;
+                node.fy = node.y;
+              }}
               nodeLabel="id"
               linkCanvasObjectMode={() => showWeights === 'show' ? 'after' : undefined}
               linkCanvasObject={paintLink}
               backgroundColor="transparent"
-              cooldownTicks={100}
+              cooldownTicks={topologySource === 'builder' ? 0 : 100}
             />
           )}
           
@@ -643,41 +773,7 @@ function App() {
                 </div>
               )}
 
-              {precomputedResult && (
-                <div style={{ padding: '16px', background: 'rgba(236, 72, 153, 0.1)', border: '1px solid rgba(236, 72, 153, 0.3)', borderRadius: '8px' }}>
-                  <h3 style={{ fontSize: '1rem', color: '#ec4899', marginBottom: '12px' }}>Network Paths Precomputed</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.9rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Algorithm</span>
-                      <span>{precomputedResult.algorithm}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Metric</span>
-                      <span style={{ textTransform: 'capitalize' }}>{precomputedResult.metric}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Pairs Computed</span>
-                      <span style={{ fontWeight: 'bold' }}>{precomputedResult.pairs_computed}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Exec Time</span>
-                      <span style={{ color: '#10b981' }}>{precomputedResult.time_ms.toFixed(3)} ms</span>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: '12px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                     Routing requests for this metric will now return in O(1) time.
-                  </div>
-                  {precomputedResult.matrix && (
-                    <button
-                      className="btn"
-                      style={{ marginTop: '12px', width: '100%', background: 'rgba(236, 72, 153, 0.2)', border: '1px solid rgba(236, 72, 153, 0.4)', color: '#fbcfe8' }}
-                      onClick={() => setShowMatrix(true)}
-                    >
-                      View Distance Matrix
-                    </button>
-                  )}
-                </div>
-              )}
+
 
               {routingResult && (
                 <div style={{ padding: '16px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px' }}>
@@ -735,135 +831,11 @@ function App() {
               )}
            </div>
 
-           {/* Analytics Chart */}
-           <div className="glass-panel flex-col" style={{ flex: 1, minHeight: '250px' }}>
-             <h2 style={{ margin: 0, fontSize: '1.2rem', marginBottom: '8px' }}>Performance</h2>
-             <div style={{ flex: 1, width: '100%' }}>
-                {routingResult || mstResult ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={[
-                      ...(routingResult ? [{ name: 'Shortest Path', time: routingResult.time_ms }] : []),
-                      ...(mstResult ? [{ name: 'MST', time: mstResult.time_ms }] : [])
-                    ]}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                      <XAxis dataKey="name" stroke="rgba(255,255,255,0.4)" axisLine={false} tickLine={false} />
-                      <YAxis stroke="rgba(255,255,255,0.4)" axisLine={false} tickLine={false} tickFormatter={v => `${v.toFixed(1)}ms`} />
-                      <Tooltip 
-                        contentStyle={{ background: 'var(--panel-bg)', borderColor: 'var(--glass-border)', borderRadius: '8px' }}
-                        itemStyle={{ color: 'var(--text-primary)' }}
-                      />
-                      <Bar dataKey="time" fill="var(--accent-primary)" radius={[4, 4, 0, 0]} maxBarSize={50} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>No data to plot</p>
-                  </div>
-                )}
-             </div>
-           </div>
+
         </div>
 
       </div>
 
-      {showMatrix && precomputedResult && precomputedResult.matrix && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
-        }}>
-          <div style={{
-            background: 'var(--panel-bg)', border: '1px solid var(--glass-border)',
-            borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '1200px',
-            maxHeight: '90vh', display: 'flex', flexDirection: 'column'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ margin: 0, color: '#ec4899', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Activity size={24} /> O(1) Precomputed Distance Matrix
-              </h2>
-              <button className="icon-btn" onClick={() => setShowMatrix(false)}>
-                <X size={24} />
-              </button>
-            </div>
-            
-            <div style={{ 
-              background: 'rgba(0,0,0,0.2)', padding: '16px', borderRadius: '8px', marginBottom: '16px',
-              display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap'
-            }}>
-              <span style={{ color: 'var(--text-secondary)' }}>Query Cache:</span>
-              <select 
-                className="input-field" 
-                style={{ width: '150px' }}
-                onChange={e => {
-                  const node = precomputedResult.nodes.find(n => n === e.target.value);
-                  if (node) setSourceNode({ id: node });
-                }}
-                value={sourceNode?.id || ''}
-              >
-                <option value="">Source Node</option>
-                {precomputedResult.nodes.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-              <span>➔</span>
-              <select 
-                className="input-field" 
-                style={{ width: '150px' }}
-                onChange={e => {
-                  const node = precomputedResult.nodes.find(n => n === e.target.value);
-                  if (node) setTargetNode({ id: node });
-                }}
-                value={targetNode?.id || ''}
-              >
-                <option value="">Target Node</option>
-                {precomputedResult.nodes.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-              
-              {sourceNode && targetNode && sourceNode.id !== targetNode.id && (
-                <div style={{ marginLeft: 'auto', background: 'rgba(236,72,153,0.1)', padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(236,72,153,0.3)' }}>
-                  Result in O(1): <strong style={{ color: '#ec4899', fontSize: '1.2rem' }}>
-                    {precomputedResult.matrix[sourceNode.id][targetNode.id] === -1.0 ? 'Unreachable' : precomputedResult.matrix[sourceNode.id][targetNode.id]}
-                  </strong>
-                </div>
-              )}
-            </div>
-
-            <div style={{ overflow: 'auto', flex: 1, border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '0.8rem' }}>
-                <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-color)', zIndex: 10 }}>
-                  <tr>
-                    <th style={{ padding: '8px', borderRight: '1px solid var(--glass-border)', borderBottom: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.05)' }}>S \ T</th>
-                    {precomputedResult.nodes.map(n => (
-                      <th key={n} style={{ padding: '8px', minWidth: '40px', borderBottom: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.05)' }}>{n.replace('Node_', '')}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {precomputedResult.nodes.map(u => (
-                    <tr key={u}>
-                      <td style={{ padding: '8px', position: 'sticky', left: 0, background: 'var(--bg-color)', borderRight: '1px solid var(--glass-border)', borderBottom: '1px solid rgba(255,255,255,0.05)', fontWeight: 'bold' }}>
-                        {u.replace('Node_', '')}
-                      </td>
-                      {precomputedResult.nodes.map(v => {
-                        const val = precomputedResult.matrix[u][v];
-                        const isQuery = (u === sourceNode?.id && v === targetNode?.id);
-                        return (
-                          <td key={v} style={{ 
-                            padding: '8px', 
-                            borderBottom: '1px solid rgba(255,255,255,0.05)',
-                            background: isQuery ? 'rgba(236,72,153,0.3)' : (u === v ? 'rgba(255,255,255,0.02)' : 'transparent'),
-                            color: val === -1.0 ? 'rgba(255,255,255,0.2)' : 'var(--text-primary)'
-                          }}>
-                            {val === -1.0 ? '∞' : val}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

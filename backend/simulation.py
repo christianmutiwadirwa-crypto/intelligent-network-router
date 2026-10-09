@@ -11,6 +11,32 @@ class SimulationEngine:
         self.graph.generate_random_network(num_nodes, degree, topology)
         return {"nodes": len(self.graph.nodes), "edges": sum(len(n.links) for n in self.graph.nodes.values()) // 2}
 
+    def setup_custom_network(self, nodes: list, links: list):
+        self.graph = NetworkGraph()
+        for node in nodes:
+            self.graph.add_node(
+                node["id"], 
+                node.get("type", "default"), 
+                node.get("fx", node.get("x")), 
+                node.get("fy", node.get("y"))
+            )
+        
+        # In this simplistic version, links might only be passed one-way from the frontend
+        # but NetworkGraph handles bidirectional connections in add_edge
+        for link in links:
+            self.graph.add_edge(
+                link["source"],
+                link["target"],
+                latency=link.get("latency", 10.0),
+                bandwidth=link.get("bandwidth", 100.0),
+                packet_loss=link.get("packet_loss", 0.0),
+                reliability=link.get("reliability", 99.9),
+                cost=link.get("cost", 50.0),
+                net_credit=link.get("net_credit", 0.0),
+                sla_bonus=link.get("sla_bonus", 0.0)
+            )
+        return {"nodes": len(self.graph.nodes), "edges": sum(len(n.links) for n in self.graph.nodes.values()) // 2}
+
     def _build_weight_func(self, metric: str):
         def weight_func(features):
             if metric == "latency":
@@ -34,11 +60,7 @@ class SimulationEngine:
         return weight_func
 
     def run_routing_simulation(self, source: str, target: str, metric: str = "latency"):
-        """Run Dijkstra (or use cache) for shortest path based on a specific metric"""
-        # Fast path: check cache
-        if hasattr(self, "routing_table") and self.routing_table["metric"] == metric:
-            return self.get_precomputed_path(source, target)
-
+        """Run Dijkstra for shortest path based on a specific metric"""
         weight_func = self._build_weight_func(metric)
         start_time = time.perf_counter()
         path, cost = RoutingAlgorithms.dijkstra(self.graph, source, target, weight_func)
@@ -170,71 +192,7 @@ class SimulationEngine:
             "algorithm_selection": selection
         }
 
-    def precompute_all_paths(self, metric: str = "latency"):
-        """
-        Runs Floyd-Warshall to precompute shortest paths between all pairs of nodes.
-        Returns the execution time and number of pairs computed.
-        Caches the result in the engine.
-        """
-        weight_func = self._build_weight_func(metric)
-        
-        start_time = time.perf_counter()
-        dist, next_node, has_negative_cycle = RoutingAlgorithms.floyd_warshall(self.graph, weight_func)
-        end_time = time.perf_counter()
 
-        self.routing_table = {
-            "dist": dist,
-            "next_node": next_node,
-            "metric": metric,
-            "has_negative_cycle": has_negative_cycle
-        }
-
-        V = len(self.graph.nodes)
-        
-        # Serialize matrix for frontend (handling float('inf'))
-        matrix = {}
-        nodes = list(self.graph.nodes.keys())
-        for u in nodes:
-            matrix[u] = {}
-            for v in nodes:
-                val = dist[u][v]
-                matrix[u][v] = -1.0 if val == float('inf') else round(val, 2)
-        
-        return {
-            "algorithm": "Floyd-Warshall",
-            "metric": metric,
-            "pairs_computed": V * V,
-            "has_negative_cycle": has_negative_cycle,
-            "time_ms": (end_time - start_time) * 1000,
-            "matrix": matrix,
-            "nodes": nodes
-        }
-
-    def get_precomputed_path(self, source: str, target: str):
-        """
-        Retrieves a precomputed path in O(path_length) time.
-        """
-        if not hasattr(self, "routing_table") or self.routing_table["dist"][source][target] == float('inf'):
-            return {"path": [], "cost": -1.0, "time_ms": 0.0}
-
-        path = [source]
-        current = source
-        visited_check = {source}
-        while current != target:
-            current = self.routing_table["next_node"][current][target]
-            if current is None or current in visited_check:
-                # Cycle detected, return valid simple path found so far
-                break
-            visited_check.add(current)
-            path.append(current)
-
-        return {
-            "algorithm": "Precomputed Table (O(1) query)",
-            "metric": self.routing_table["metric"],
-            "path": path,
-            "cost": self.routing_table["dist"][source][target],
-            "time_ms": 0.0  # Instantaneous cache hit
-        }
 
 if __name__ == "__main__":
     engine = SimulationEngine()

@@ -142,53 +142,6 @@ class RoutingAlgorithms:
         return mst, total_cost
 
     @staticmethod
-    def floyd_warshall(graph: NetworkGraph, weight_func: Callable[[dict], float]) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, str]], bool]:
-        """
-        Finds shortest paths between all pairs of nodes using Floyd-Warshall algorithm.
-        Complexity: O(V^3)
-        Returns: (distances, next_node, has_negative_cycle)
-        """
-        nodes = list(graph.nodes.keys())
-        V = len(nodes)
-        
-        # Initialize distance matrix with infinity and next matrix with None
-        dist = {u: {v: float('inf') for v in nodes} for u in nodes}
-        next_node = {u: {v: None for v in nodes} for u in nodes}
-
-        # Distance to self is 0
-        for u in nodes:
-            dist[u][u] = 0.0
-            next_node[u][u] = u
-
-        # Add all edges to distance matrix
-        for u, node in graph.nodes.items():
-            for link in node.links:
-                v = link.target
-                w = weight_func(link.get_features())
-                # If there are multiple edges, keep the minimum (though not applicable in our simple graph)
-                if w < dist[u][v]:
-                    dist[u][v] = w
-                    next_node[u][v] = v
-
-        # Floyd-Warshall core
-        for k in nodes:
-            for i in nodes:
-                for j in nodes:
-                    if dist[i][k] != float('inf') and dist[k][j] != float('inf'):
-                        if dist[i][k] + dist[k][j] < dist[i][j]:
-                            dist[i][j] = dist[i][k] + dist[k][j]
-                            next_node[i][j] = next_node[i][k]
-
-        # Check for negative cycles
-        has_negative_cycle = False
-        for i in nodes:
-            if dist[i][i] < 0:
-                has_negative_cycle = True
-                break
-
-        return dist, next_node, has_negative_cycle
-
-    @staticmethod
     def prim(graph: NetworkGraph, start_node_id: str, weight_func: Callable[[dict], float]) -> Tuple[List[Tuple[str, str, float]], float]:
         """
         Finds Minimum Spanning Tree using Prim's algorithm.

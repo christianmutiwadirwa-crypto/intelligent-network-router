@@ -21,6 +21,10 @@ class NetworkConfig(BaseModel):
     degree: int = 3
     topology: str = "average"
 
+class CustomNetworkRequest(BaseModel):
+    nodes: list
+    links: list
+
 class RoutingRequest(BaseModel):
     source: str
     target: str
@@ -54,7 +58,7 @@ class UpdateLinkRequest(BaseModel):
 def generate_network(config: NetworkConfig):
     stats = engine.setup_random_network(config.num_nodes, config.degree, config.topology)
 
-    nodes = list(engine.graph.nodes.keys())
+    nodes = list(engine.graph.nodes.values())
     links = []
     for node_id, node in engine.graph.nodes.items():
         for link in node.links:
@@ -67,7 +71,29 @@ def generate_network(config: NetworkConfig):
     return {
         "stats": stats,
         "graph": {
-            "nodes": [{"id": n} for n in nodes],
+            "nodes": [{"id": n.node_id, "type": n.node_type, "fx": n.x, "fy": n.y, "x": n.x, "y": n.y} if n.x is not None else {"id": n.node_id, "type": n.node_type} for n in nodes],
+            "links": links
+        }
+    }
+
+@app.post("/api/network/custom")
+def custom_network(req: CustomNetworkRequest):
+    stats = engine.setup_custom_network(req.nodes, req.links)
+    
+    nodes = list(engine.graph.nodes.values())
+    links = []
+    for node_id, node in engine.graph.nodes.items():
+        for link in node.links:
+            links.append({
+                "source": node_id,
+                "target": link.target,
+                "features": link.get_features()
+            })
+
+    return {
+        "stats": stats,
+        "graph": {
+            "nodes": [{"id": n.node_id, "type": n.node_type, "fx": n.x, "fy": n.y, "x": n.x, "y": n.y} if n.x is not None else {"id": n.node_id, "type": n.node_type} for n in nodes],
             "links": links
         }
     }
@@ -115,21 +141,6 @@ def get_intelligent_mst(req: IntelligentMSTRequest):
     """
     result = engine.run_intelligent_mst(req.metric)
     return result
-
-class PrecomputeRequest(BaseModel):
-    metric: str = "latency"
-
-@app.post("/api/routing/precompute")
-def precompute_paths(req: PrecomputeRequest):
-    """Precompute all shortest paths using Floyd-Warshall."""
-    return engine.precompute_all_paths(req.metric)
-
-@app.post("/api/routing/precomputed-path")
-def get_cached_path(req: RoutingRequest):
-    """Retrieve an already precomputed shortest path in O(1)."""
-    if req.source not in engine.graph.nodes or req.target not in engine.graph.nodes:
-        raise HTTPException(status_code=404, detail="Source or target node not found")
-    return engine.get_precomputed_path(req.source, req.target)
 
 if __name__ == "__main__":
     uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)

@@ -33,8 +33,11 @@ class Link:
         }
 
 class Node:
-    def __init__(self, node_id: str):
+    def __init__(self, node_id: str, node_type: str = "unknown", x: float = None, y: float = None):
         self.node_id = node_id
+        self.node_type = node_type
+        self.x = x
+        self.y = y
         self.links: List[Link] = []
 
     def add_link(self, target: str, latency: float, bandwidth: float,
@@ -47,9 +50,16 @@ class NetworkGraph:
     def __init__(self):
         self.nodes: Dict[str, Node] = {}
 
-    def add_node(self, node_id: str):
+    def add_node(self, node_id: str, node_type: str = "unknown", x: float = None, y: float = None):
         if node_id not in self.nodes:
-            self.nodes[node_id] = Node(node_id)
+            self.nodes[node_id] = Node(node_id, node_type, x, y)
+        else:
+            if node_type != "unknown":
+                self.nodes[node_id].node_type = node_type
+            if x is not None:
+                self.nodes[node_id].x = x
+            if y is not None:
+                self.nodes[node_id].y = y
 
     def add_edge(self, source: str, target: str, latency: float, bandwidth: float,
                  packet_loss: float, reliability: float, cost: float,

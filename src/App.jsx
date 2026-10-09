@@ -6,7 +6,7 @@ import './index.css';
 import Builder from './Builder';
 import { routerImg, pcImg } from './device-icons';
 
-const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8000/api';
+const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8000';
 
 function App() {
   const [networkStats, setNetworkStats] = useState(null);

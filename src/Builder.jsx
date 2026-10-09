@@ -248,7 +248,7 @@ const Builder = ({ setCustomGraphData, setPage }) => {
     };
     
     try {
-      const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8000/api';
+      const API_BASE = import.meta.env.PROD ? '/api' : 'http://localhost:8000';
       const res = await axios.post(`${API_BASE}/network/custom`, req);
       setCustomGraphData(res.data);
     } catch (e) {

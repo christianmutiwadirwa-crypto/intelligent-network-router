@@ -54,7 +54,7 @@ class UpdateLinkRequest(BaseModel):
     net_credit: float = 0.0
     sla_bonus: float = 0.0
 
-@app.post("/api/network/generate")
+@app.post("/network/generate")
 def generate_network(config: NetworkConfig):
     stats = engine.setup_random_network(config.num_nodes, config.degree, config.topology)
 
@@ -76,7 +76,7 @@ def generate_network(config: NetworkConfig):
         }
     }
 
-@app.post("/api/network/custom")
+@app.post("/network/custom")
 def custom_network(req: CustomNetworkRequest):
     stats = engine.setup_custom_network(req.nodes, req.links)
     
@@ -98,7 +98,7 @@ def custom_network(req: CustomNetworkRequest):
         }
     }
 
-@app.post("/api/network/update-link")
+@app.post("/network/update-link")
 def update_network_link(req: UpdateLinkRequest):
     if req.source not in engine.graph.nodes or req.target not in engine.graph.nodes:
         raise HTTPException(status_code=404, detail="Source or target node not found")
@@ -110,19 +110,19 @@ def update_network_link(req: UpdateLinkRequest):
     )
     return {"status": "success"}
 
-@app.post("/api/routing/shortest-path")
+@app.post("/routing/shortest-path")
 def get_shortest_path(req: RoutingRequest):
     if req.source not in engine.graph.nodes or req.target not in engine.graph.nodes:
         raise HTTPException(status_code=404, detail="Source or target node not found")
     result = engine.run_routing_simulation(req.source, req.target, req.metric)
     return result
 
-@app.post("/api/routing/mst")
+@app.post("/routing/mst")
 def get_mst(req: MSTRequest):
     result = engine.run_mst_simulation(req.algorithm, req.metric, req.start_node)
     return result
 
-@app.post("/api/routing/intelligent-path")
+@app.post("/routing/intelligent-path")
 def get_intelligent_path(req: IntelligentPathRequest):
     """
     Complexity-Aware Algorithm Selection for shortest path routing.
@@ -133,7 +133,7 @@ def get_intelligent_path(req: IntelligentPathRequest):
     result = engine.run_intelligent_routing(req.source, req.target, req.metric)
     return result
 
-@app.post("/api/routing/intelligent-mst")
+@app.post("/routing/intelligent-mst")
 def get_intelligent_mst(req: IntelligentMSTRequest):
     """
     Complexity-Aware Algorithm Selection for MST.
@@ -143,4 +143,4 @@ def get_intelligent_mst(req: IntelligentMSTRequest):
     return result
 
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("index:app", host="0.0.0.0", port=8000, reload=True)
